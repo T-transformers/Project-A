@@ -1,19 +1,25 @@
 import json
+import jsonschema
 
-# Vertex AI imports
-from google.cloud import aiplatform
-from vertexai.generative_models import GenerativeModel
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+import os
+import google.generativeai as genai
 
 from duckduckgo_search import DDGS
 
 class LearningHubAgent:
-    def __init__(self, project_id, location="us-central1"):
+    def __init__(self):
         """Initialize the Learning Hub Agent with Vertex AI."""
-        # Initialize Vertex AI
-        aiplatform.init(project=project_id, location=location)
         
+        genai.configure(api_key=os.environ["GEMINI_API_KEY"])
         # Initialize Gemini model through Vertex AI
-        self.model = GenerativeModel("gemini-2.0-flash")
+        self.model = genai.GenerativeModel(
+                model_name="gemini-2.0-flash",
+                system_instruction="Always return valid JSON."
+                )
         
         # Initialize search engine for RAG
         self.ddgs = DDGS()
@@ -21,33 +27,65 @@ class LearningHubAgent:
     def generate_headlines(self, query):
         """Generate course headlines/syllabus based on the query."""
         print(f"Generating headlines for: {query}")
+
+        # Define the response schema
+        schema = {
+            "type": "object",
+            "properties": {
+                "main_headline": {"type": "string"},
+                "topics": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                    "headline": {"type": "string"},
+                    "subtopics": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    }
+                    },
+                    "required": ["headline", "subtopics"]
+                }
+                }
+            },
+            "required": ["main_headline", "topics"]
+            }
         
         prompt = f"""
         Create a comprehensive course syllabus with 5-7 main headlines 
         for a learning module about: "{query}".
         
         For each headline, provide 2-3 sub-topics that should be covered.
-        Format your response as JSON with this structure:
-        {{
-            "main_headline": "The course title",
-            "topics": [
-                {{
-                    "headline": "Topic 1",
-                    "subtopics": ["Subtopic 1.1", "Subtopic 1.2"]
-                }},
-                ...
-            ]
-        }}
+        Create a detailed outline with a main headline, multiple topics, and related subtopics. The number of topics should be determined based on what makes sense for the subject matter.
+        Format your response as a JSON object that strictly follows this JSON Schema:
+        {json.dumps(schema, indent=2)} 
         """
-        
+
         response = self.model.generate_content(prompt)
         
-        # Extract JSON from the response
-        json_str = response.text
-        # Preprocessing to handle single quotes in JSON
-        
-        headlines = json.loads(json_str)
-        return headlines
+        # Parse the response
+        try:
+            # Try to parse directly first
+            json_data = json.loads(response.text)
+        except json.JSONDecodeError:
+            # If that fails, try to extract from markdown
+            text = response.text
+            if "```json" in text:
+                json_str = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                json_str = text.split("```")[1].split("```")[0].strip()
+            else:
+                json_str = text
+            json_data = json.loads(json_str)
+
+        # After parsing the JSON response:
+        try:
+            jsonschema.validate(instance=json_data, schema=schema)
+            print("JSON validation successful!")
+        except jsonschema.exceptions.ValidationError as e:
+            print(f"JSON validation error: {e}")
+
+        return json_data
     
     def web_search(self, query, headlines):
         """Perform web search (RAG) based on query and headlines."""
@@ -77,11 +115,11 @@ class LearningHubAgent:
     
     def retrieve_images(self, query, headlines):
         """Retrieve relevant images based on query and headlines."""
-        print(f"Finding images for: {query}")
+        print(f"Finding images for: {headlines["main_headline"]}")
         images_data = []
         
         # Search for images related to the main query
-        main_query = f"{query} diagram educational"
+        main_query = f"{headlines["main_headline"]} diagram educational"
         main_images = list(self.ddgs.images(main_query, max_results=2))
         
         # Search for topic-specific images

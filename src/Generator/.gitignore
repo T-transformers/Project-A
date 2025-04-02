@@ -1,0 +1,11 @@
+
+v0.1-alpha.md
+
+# env
+.env
+
+# Virtual Environment
+.venv/
+
+# Python
+__pycache__/
