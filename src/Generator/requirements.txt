@@ -1,4 +1,4 @@
-google-genai
-python-dotenv
-vertexai
-duckduckgo_search
+python-dotenv>=1.1.0
+duckduckgo_search>=2025.4.1
+google-generativeai>=0.8.4
+jsonschema>=4.23.0
